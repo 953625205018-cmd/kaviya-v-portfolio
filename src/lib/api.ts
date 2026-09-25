@@ -69,16 +69,20 @@ export async function loginOwner(
       body: JSON.stringify({ email, password }),
     });
 
-    const contentType = res.headers.get('content-type') || '';
+    const rawText = await res.text();
+    let data: any = null;
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      data = null;
+    }
 
-    if (!contentType.includes('application/json')) {
+    if (!data) {
       return {
         success: false,
         error: `Login server returned an invalid response (HTTP ${res.status}). Please check the deployed /api/auth/login endpoint.`,
       };
     }
-
-    const data = await res.json();
 
     if (!res.ok || !data.success) {
       return {
@@ -127,8 +131,14 @@ export async function checkAuthStatus(): Promise<{
       setStoredAuthToken(null);
       return { isAuthenticated: false, role: 'PUBLIC', user: null };
     }
-    const data = await res.json();
-    if (data.isAuthenticated && data.role === 'OWNER') {
+    const rawText = await res.text();
+    let data: any = null;
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      data = null;
+    }
+    if (data && data.isAuthenticated && data.role === 'OWNER') {
       return { isAuthenticated: true, role: 'OWNER', user: data.user };
     }
     setStoredAuthToken(null);
