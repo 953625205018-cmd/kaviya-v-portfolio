@@ -128,8 +128,8 @@ export const PdfUploader: React.FC<PdfUploaderProps> = ({
       return;
     }
 
-    if (file.size > 50 * 1024 * 1024) {
-      setErrorMessage('PDF file exceeds the 50MB limit.');
+    if (file.size > 200 * 1024 * 1024) {
+      setErrorMessage('PDF file exceeds the 200MB limit.');
       return;
     }
 

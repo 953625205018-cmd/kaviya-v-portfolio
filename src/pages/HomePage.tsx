@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { upload as vercelBlobUpload } from '@vercel/blob/client';
 import { NavigationTab } from '../types';
 import { QuoteBanner } from '../components/QuoteBanner';
 import { useAuth } from '../context/AuthContext';
@@ -50,23 +51,55 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
 
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      const formData = new FormData();
-      formData.append('avatar', file);
 
       try {
         const token = localStorage.getItem('portfolio_owner_auth_token');
         const headers: Record<string, string> = {};
         if (token) headers['Authorization'] = `Bearer ${token}`;
 
-        const res = await fetch('/api/avatar', {
-          method: 'POST',
-          headers,
-          body: formData,
-        });
-        const data = await res.json();
-        if (data?.avatarUrl) {
-          setProfileImage(data.avatarUrl);
-          localStorage.setItem('kaviya_custom_avatar', data.avatarUrl);
+        let avatarUrl = '';
+
+        // 1. Try Vercel Blob direct upload first
+        try {
+          const cleanExt = file.name.substring(file.name.lastIndexOf('.')).toLowerCase() || '.jpg';
+          const blob = await vercelBlobUpload(`avatar_${Date.now()}${cleanExt}`, file, {
+            access: 'public',
+            handleUploadUrl: '/api/upload/blob',
+            headers,
+          });
+          if (blob && blob.url) {
+            avatarUrl = blob.url;
+            await fetch('/api/avatar', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...headers,
+              },
+              body: JSON.stringify({ avatarUrl }),
+            });
+          }
+        } catch (blobErr) {
+          console.warn('Vercel Blob avatar direct upload fallback:', blobErr);
+        }
+
+        // 2. Fallback to standard server avatar upload
+        if (!avatarUrl) {
+          const formData = new FormData();
+          formData.append('avatar', file);
+          const res = await fetch('/api/avatar', {
+            method: 'POST',
+            headers,
+            body: formData,
+          });
+          const data = await res.json();
+          if (data?.avatarUrl) {
+            avatarUrl = data.avatarUrl;
+          }
+        }
+
+        if (avatarUrl) {
+          setProfileImage(avatarUrl);
+          localStorage.setItem('kaviya_custom_avatar', avatarUrl);
         }
       } catch (err) {
         console.error('Avatar upload error:', err);

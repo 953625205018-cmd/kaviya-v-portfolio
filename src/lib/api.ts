@@ -1,3 +1,5 @@
+import { upload as vercelBlobUpload } from '@vercel/blob/client';
+
 export interface MediaItem {
   id: string; // Unique file ID / storageKey
   userId: string; // User ID (e.g. 'Kaviya')
@@ -197,10 +199,24 @@ export async function fetchMedia(key: string): Promise<MediaItem | null> {
   }
 }
 
+function determineMediaType(fileName: string, mimeType?: string): 'video' | 'audio' | 'pdf' | 'image' {
+  const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
+  const mime = (mimeType || '').toLowerCase();
+  if (ext === '.pdf' || mime.includes('pdf') || ext === '.doc' || ext === '.docx') {
+    return 'pdf';
+  }
+  if (['.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg'].includes(ext) || mime.startsWith('image/')) {
+    return 'image';
+  }
+  if (['.mp3', '.wav', '.ogg', '.m4a', '.aac'].includes(ext) || mime.startsWith('audio/')) {
+    return 'audio';
+  }
+  return 'video';
+}
+
 /**
- * Upload a media file (Video, Audio, Image, or PDF) to cloud storage and register in DB.
- * Uses high-performance chunked streaming for videos and large files, with automatic retry,
- * progress tracking, and zero-stall completion.
+ * Upload a media file (Video, Audio, Image, PDF, or Document) to cloud storage and register in DB.
+ * Uses Vercel Blob direct browser streaming for large files, with chunked fallback.
  */
 export async function uploadMediaFile(
   file: File,
@@ -213,29 +229,88 @@ export async function uploadMediaFile(
   },
   onProgress?: (percent: number) => void
 ): Promise<MediaItem> {
-  // FAST-PATH: High-speed direct streaming upload with native XHR progress.
-  // Direct streaming begins immediately (no slicing overhead or chunk queuing delays)
-  // and transfers video/media data over a single connection at full line speed.
-  // For files up to 50MB, direct streaming is 5x-10x faster and completes in 1-3 seconds.
-  const LARGE_FILE_THRESHOLD = 50 * 1024 * 1024; // 50MB
+  const mediaType = determineMediaType(file.name, file.type);
+  const now = new Date();
 
-  if (file.size <= LARGE_FILE_THRESHOLD) {
+  // 1. PRIMARY ARCHITECTURE: Vercel Blob direct browser-to-cloud upload
+  // Bypasses serverless payload limits, supports large files (up to 1GB+) with live progress.
+  try {
+    const cleanExt = file.name.substring(file.name.lastIndexOf('.')).toLowerCase() || '';
+    const safeBaseName = file.name.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const uniquePathname = `${storageKey}_${Date.now()}_${safeBaseName}${cleanExt}`;
+
+    const blob = await vercelBlobUpload(uniquePathname, file, {
+      access: 'public',
+      handleUploadUrl: '/api/upload/blob',
+      headers: getAuthHeaders(),
+      onUploadProgress: (progress) => {
+        if (onProgress) {
+          onProgress(Math.min(99, Math.round(progress.percentage)));
+        }
+      },
+    });
+
+    if (blob && blob.url) {
+      const newRecord: MediaItem = {
+        id: storageKey,
+        userId: metadata?.userId || DEFAULT_USER_ID,
+        section: metadata?.section || 'General',
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: file.type || blob.contentType || 'application/octet-stream',
+        fileUrl: blob.url,
+        savedFileName: blob.pathname || uniquePathname,
+        title: metadata?.title || file.name.replace(/\.[^/.]+$/, ''),
+        description: metadata?.description || '',
+        mediaType,
+        uploadDate: now.toISOString().split('T')[0],
+        uploadTime: now.toTimeString().split(' ')[0],
+        uploadedAt: now.toISOString(),
+        uploadStatus: 'saved',
+      };
+
+      const regRes = await fetch(`/api/media/${encodeURIComponent(storageKey)}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify(newRecord),
+      });
+
+      if (regRes.ok) {
+        const regData = await regRes.json();
+        if (regData.success && regData.item) {
+          if (onProgress) onProgress(100);
+          return regData.item;
+        }
+      }
+
+      if (onProgress) onProgress(100);
+      return newRecord;
+    }
+  } catch (blobErr: any) {
+    if (blobErr.message && blobErr.message.includes('Access Denied')) {
+      throw blobErr;
+    }
+    console.warn('Vercel Blob direct upload bypassed/fallback:', blobErr?.message);
+  }
+
+  // 2. FALLBACK ARCHITECTURE: Safe chunked streaming (3MB chunks safely below Vercel's 4.5MB limit)
+  if (file.size <= 3 * 1024 * 1024) {
     try {
       return await uploadDirectFile(file, storageKey, metadata, onProgress);
     } catch (directErr: any) {
-      // If it's an authorization error or file size error, fail immediately
       if (directErr.message && (
         directErr.message.includes('Access Denied') || 
-        directErr.message.includes('150MB limit') ||
         directErr.message.includes('Only the authorized website owner')
       )) {
         throw directErr;
       }
-      console.warn('Direct upload encountered a transient issue, attempting chunked upload fallback:', directErr);
+      console.warn('Direct upload fallback to chunked upload:', directErr);
     }
   }
 
-  // Resumable/Chunked streaming upload with high-throughput 8MB chunks for very large files or network fallback
   return uploadChunkedFile(file, storageKey, metadata, onProgress);
 }
 
@@ -250,7 +325,7 @@ async function uploadChunkedFile(
   },
   onProgress?: (percent: number) => void
 ): Promise<MediaItem> {
-  const CHUNK_SIZE = 8 * 1024 * 1024; // 8MB per chunk for high throughput and minimal round trips
+  const CHUNK_SIZE = 3 * 1024 * 1024; // 3MB chunks (strictly under Vercel Serverless 4.5MB limit)
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
   const uploadId = `${storageKey}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
@@ -293,9 +368,6 @@ async function uploadChunkedFile(
 
         if (res.status === 403 || res.status === 401) {
           throw new Error('Access Denied: Only the authorized website owner can upload or replace files. Public users have view-only access.');
-        }
-        if (res.status === 413) {
-          throw new Error('File exceeds the 150MB limit. Please choose a smaller file.');
         }
 
         if (!res.ok) {
@@ -382,9 +454,6 @@ function uploadDirectFile(
 
       const contentType = xhr.getResponseHeader('content-type') || '';
       if (!contentType.includes('application/json')) {
-        if (xhr.status === 413) {
-          return reject(new Error('File exceeds the 150MB limit. Please choose a smaller file.'));
-        }
         if (xhr.status === 403 || xhr.status === 401) {
           return reject(new Error('Access Denied: Only the authorized website owner can upload or replace files. Public users have view-only access.'));
         }

@@ -692,6 +692,33 @@ apiRouter.patch('/media/:key', requireOwner, (req, res) => {
   return res.json({ success: true, item: db[key] });
 });
 
+// Media API: Register/Put media record
+apiRouter.put('/media/:key', requireOwner, (req, res) => {
+  const { key } = req.params;
+  const db = readMediaDB();
+  const now = new Date();
+  const item: MediaItem = {
+    id: key,
+    userId: req.body.userId || 'Kaviya',
+    section: req.body.section || 'General',
+    fileName: req.body.fileName || 'file',
+    fileSize: Number(req.body.fileSize) || 0,
+    mimeType: req.body.mimeType || 'application/octet-stream',
+    fileUrl: req.body.fileUrl || '',
+    savedFileName: req.body.savedFileName || req.body.fileName || key,
+    title: req.body.title || req.body.fileName || key,
+    description: req.body.description || '',
+    mediaType: req.body.mediaType || 'video',
+    uploadDate: req.body.uploadDate || now.toISOString().split('T')[0],
+    uploadTime: req.body.uploadTime || now.toTimeString().split(' ')[0],
+    uploadedAt: req.body.uploadedAt || now.toISOString(),
+    uploadStatus: 'saved',
+  };
+  db[key] = item;
+  writeMediaDB(db);
+  return res.json({ success: true, item });
+});
+
 // Media API: Delete
 apiRouter.delete('/media/:key', requireOwner, (req, res) => {
   const { key } = req.params;
@@ -814,9 +841,22 @@ apiRouter.post('/notes/:key', requireOwner, (req, res) => {
 
 // Avatar API
 apiRouter.post('/avatar', requireOwner, (req, res) => {
+  if (req.body && req.body.avatarUrl) {
+    const notes = readNotesDB();
+    notes['kaviya_custom_avatar'] = req.body.avatarUrl;
+    writeNotesDB(notes);
+    return res.json({ success: true, avatarUrl: req.body.avatarUrl });
+  }
+
   upload.single('avatar')(req, res, (err: any) => {
     if (err) {
       return res.status(400).json({ success: false, error: err.message || 'Avatar upload failed' });
+    }
+    if (req.body && req.body.avatarUrl) {
+      const notes = readNotesDB();
+      notes['kaviya_custom_avatar'] = req.body.avatarUrl;
+      writeNotesDB(notes);
+      return res.json({ success: true, avatarUrl: req.body.avatarUrl });
     }
     if (!req.file) {
       return res.status(400).json({ success: false, error: 'No avatar file provided' });

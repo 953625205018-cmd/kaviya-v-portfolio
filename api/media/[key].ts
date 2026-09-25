@@ -138,6 +138,31 @@ export default async function handler(req: any, res: any) {
     return sendJson(res, 200, { success: true, item: db[storageKey] });
   }
 
+  if (req.method === 'PUT' || req.method === 'POST') {
+    const body = await getJsonBody(req);
+    const now = new Date();
+    const newRecord = {
+      id: storageKey,
+      userId: body?.userId || 'Kaviya',
+      section: body?.section || 'General',
+      fileName: body?.fileName || 'file',
+      fileSize: Number(body?.fileSize) || 0,
+      mimeType: body?.mimeType || 'application/octet-stream',
+      fileUrl: body?.fileUrl || '',
+      savedFileName: body?.savedFileName || body?.fileName || storageKey,
+      title: body?.title || body?.fileName || storageKey,
+      description: body?.description || '',
+      mediaType: body?.mediaType || 'video',
+      uploadDate: body?.uploadDate || now.toISOString().split('T')[0],
+      uploadTime: body?.uploadTime || now.toTimeString().split(' ')[0],
+      uploadedAt: body?.uploadedAt || now.toISOString(),
+      uploadStatus: 'saved',
+    };
+    db[storageKey] = newRecord;
+    writeMedia(db);
+    return sendJson(res, 200, { success: true, item: newRecord });
+  }
+
   if (req.method === 'DELETE') {
     const item = db[storageKey];
     if (item && item.savedFileName) {

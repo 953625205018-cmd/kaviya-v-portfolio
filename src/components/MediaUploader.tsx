@@ -335,8 +335,8 @@ export const MediaUploader: React.FC<MediaUploaderProps> = ({
       return;
     }
 
-    if (file.size > 150 * 1024 * 1024) {
-      setErrorMessage('File size exceeds the 150MB limit.');
+    if (file.size > 1024 * 1024 * 1024) {
+      setErrorMessage('File size exceeds the 1GB limit.');
       return;
     }
 

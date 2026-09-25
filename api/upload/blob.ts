@@ -1,6 +1,5 @@
+import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
 
 function sendJson(res: any, statusCode: number, data: any) {
   res.setHeader('Content-Type', 'application/json');
@@ -62,26 +61,9 @@ async function getJsonBody(req: any): Promise<any> {
   return {};
 }
 
-function saveAvatarUrl(avatarUrl: string) {
-  try {
-    const isVercel = !!process.env.VERCEL;
-    const dataDir = isVercel ? '/tmp/data' : path.join(process.cwd(), 'data');
-    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-    const notesFile = path.join(dataDir, 'notes_db.json');
-    let notes: Record<string, string> = {};
-    if (fs.existsSync(notesFile)) {
-      try { notes = JSON.parse(fs.readFileSync(notesFile, 'utf-8')); } catch {}
-    }
-    notes['kaviya_custom_avatar'] = avatarUrl;
-    fs.writeFileSync(notesFile, JSON.stringify(notes, null, 2), 'utf-8');
-  } catch (e) {
-    console.error('Failed to save avatar:', e);
-  }
-}
-
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-auth-token');
   res.setHeader('Content-Type', 'application/json');
 
@@ -90,46 +72,56 @@ export default async function handler(req: any, res: any) {
     return res.end();
   }
 
-  if (req.method === 'POST') {
-    const authHeader = (req.headers['authorization'] || req.headers['Authorization']) as string;
-    let token = '';
-    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-      token = authHeader.substring(7).trim();
-    } else if (req.headers['x-auth-token']) {
-      token = String(req.headers['x-auth-token']).trim();
-    }
-
-    if (!verifyToken(token)) {
-      return sendJson(res, 403, {
-        success: false,
-        error: 'Access Denied: Only the verified website owner can upload profile photos.',
-      });
-    }
-
-    const body = await getJsonBody(req);
-    if (body?.avatarUrl) {
-      saveAvatarUrl(body.avatarUrl);
-      return sendJson(res, 200, { success: true, avatarUrl: body.avatarUrl });
-    }
-
-    return sendJson(res, 400, { success: false, error: 'avatarUrl is required in request body' });
+  if (req.method !== 'POST') {
+    return sendJson(res, 405, { success: false, error: 'Method Not Allowed' });
   }
 
-  let avatarUrl = null;
-  try {
-    const tmpFile = '/tmp/data/notes_db.json';
-    if (fs.existsSync(tmpFile)) {
-      const notes = JSON.parse(fs.readFileSync(tmpFile, 'utf-8'));
-      avatarUrl = notes['kaviya_custom_avatar'] || null;
-    }
-    if (!avatarUrl) {
-      const baseFile = path.join(process.cwd(), 'data', 'notes_db.json');
-      if (fs.existsSync(baseFile)) {
-        const notes = JSON.parse(fs.readFileSync(baseFile, 'utf-8'));
-        avatarUrl = notes['kaviya_custom_avatar'] || null;
-      }
-    }
-  } catch {}
+  const authHeader = (req.headers['authorization'] || req.headers['Authorization']) as string;
+  let token = '';
+  if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7).trim();
+  } else if (req.headers['x-auth-token']) {
+    token = String(req.headers['x-auth-token']).trim();
+  }
 
-  return sendJson(res, 200, { avatarUrl });
+  if (!verifyToken(token)) {
+    return sendJson(res, 403, {
+      success: false,
+      error: 'Access Denied: Only the verified website owner can upload content.',
+    });
+  }
+
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return sendJson(res, 501, {
+      success: false,
+      error: 'BLOB_READ_WRITE_TOKEN is not configured.',
+    });
+  }
+
+  const body = (await getJsonBody(req)) as HandleUploadBody;
+
+  try {
+    const jsonResponse = await handleUpload({
+      body,
+      request: req,
+      onBeforeGenerateToken: async (pathname) => {
+        return {
+          allowedContentTypes: [
+            'video/mp4', 'video/webm', 'video/quicktime', 'video/ogg',
+            'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/aac',
+            'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml',
+            'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          ],
+          maximumSizeInBytes: 1024 * 1024 * 1024, // 1GB limit
+          tokenPayload: JSON.stringify({ pathname }),
+        };
+      },
+      onUploadCompleted: async () => {},
+    });
+
+    return sendJson(res, 200, jsonResponse);
+  } catch (error: any) {
+    console.error('handleUpload error:', error);
+    return sendJson(res, 400, { success: false, error: error.message || 'Upload token generation failed' });
+  }
 }
