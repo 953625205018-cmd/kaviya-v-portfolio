@@ -13,7 +13,8 @@ export default async function handler(req: any, res: any) {
   }
 
   const { filename: rawFilename } = req.query || {};
-  const filename = typeof rawFilename === 'string' ? path.basename(rawFilename) : '';
+  const rawName = Array.isArray(rawFilename) ? rawFilename[0] : rawFilename;
+  const filename = typeof rawName === 'string' ? path.basename(rawName) : '';
 
   if (!filename) {
     return res.status(400).json({ error: 'Filename is required' });
