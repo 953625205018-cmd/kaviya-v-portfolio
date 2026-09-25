@@ -68,19 +68,42 @@ export async function loginOwner(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      return { 
-        success: false, 
-        error: data?.error || 'Authentication rejected. Only the authorized website owner has administrative access.' 
+
+    const contentType = res.headers.get('content-type') || '';
+
+    if (!contentType.includes('application/json')) {
+      return {
+        success: false,
+        error: `Login server returned an invalid response (HTTP ${res.status}). Please check the deployed /api/auth/login endpoint.`,
       };
     }
+
+    const data = await res.json();
+
+    if (!res.ok || !data.success) {
+      return {
+        success: false,
+        error:
+          data?.error ||
+          'Authentication rejected. Only the authorized website owner has administrative access.',
+      };
+    }
+
     if (data.token) {
       setStoredAuthToken(data.token);
     }
-    return { success: true, user: data.user };
+
+    return {
+      success: true,
+      user: data.user,
+    };
   } catch (err: any) {
-    return { success: false, error: err.message || 'Unable to connect to authentication server.' };
+    return {
+      success: false,
+      error:
+        err.message ||
+        'Unable to connect to authentication server.',
+    };
   }
 }
 
