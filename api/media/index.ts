@@ -1,4 +1,17 @@
-import { readMediaDB } from '../../src/server/backend';
+import fs from 'fs';
+import path from 'path';
+
+function sendJson(res: any, statusCode: number, data: any) {
+  res.setHeader('Content-Type', 'application/json');
+  if (typeof res.status === 'function') {
+    if (typeof res.json === 'function') {
+      return res.status(statusCode).json(data);
+    }
+    return res.status(statusCode).send(JSON.stringify(data));
+  }
+  res.statusCode = statusCode;
+  res.end(JSON.stringify(data));
+}
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -7,9 +20,24 @@ export default async function handler(req: any, res: any) {
   res.setHeader('Content-Type', 'application/json');
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    res.statusCode = 200;
+    return res.end();
   }
 
-  const db = readMediaDB();
-  return res.status(200).json(db);
+  try {
+    const tmpFile = '/tmp/data/media_db.json';
+    if (fs.existsSync(tmpFile)) {
+      const data = JSON.parse(fs.readFileSync(tmpFile, 'utf-8'));
+      return sendJson(res, 200, data);
+    }
+    const baseFile = path.join(process.cwd(), 'data', 'media_db.json');
+    if (fs.existsSync(baseFile)) {
+      const data = JSON.parse(fs.readFileSync(baseFile, 'utf-8'));
+      return sendJson(res, 200, data);
+    }
+  } catch (err: any) {
+    console.error('Error reading media DB:', err);
+  }
+
+  return sendJson(res, 200, {});
 }

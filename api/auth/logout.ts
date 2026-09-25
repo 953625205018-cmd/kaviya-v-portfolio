@@ -1,4 +1,14 @@
-import { readSessionsDB, writeSessionsDB } from '../../src/server/backend';
+function sendJson(res: any, statusCode: number, data: any) {
+  res.setHeader('Content-Type', 'application/json');
+  if (typeof res.status === 'function') {
+    if (typeof res.json === 'function') {
+      return res.status(statusCode).json(data);
+    }
+    return res.status(statusCode).send(JSON.stringify(data));
+  }
+  res.statusCode = statusCode;
+  res.end(JSON.stringify(data));
+}
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -7,26 +17,9 @@ export default async function handler(req: any, res: any) {
   res.setHeader('Content-Type', 'application/json');
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    res.statusCode = 200;
+    return res.end();
   }
 
-  const authHeader = req.headers['authorization'] || req.headers['Authorization'];
-  let token = '';
-  if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-    token = authHeader.substring(7).trim();
-  } else if (req.headers['x-auth-token']) {
-    token = String(req.headers['x-auth-token']).trim();
-  }
-
-  if (token) {
-    try {
-      const sessions = readSessionsDB();
-      if (sessions[token]) {
-        delete sessions[token];
-        writeSessionsDB(sessions);
-      }
-    } catch {}
-  }
-
-  return res.status(200).json({ success: true });
+  return sendJson(res, 200, { success: true });
 }
